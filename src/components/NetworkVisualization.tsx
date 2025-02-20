@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import networkData from '../assets/developer_network_countrybetweenness.csv';
-import edgesData from '../assets/network_edges.csv';
+import { SimulationNodeDatum } from 'd3';
 
 // Define interfaces for our data structures
 interface DeveloperNode extends d3.SimulationNodeDatum {
@@ -31,34 +30,47 @@ const NetworkVisualization: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Process the imported data
-    const processData = () => {
+    // Use fetch to load CSV files
+    const loadData = async () => {
       try {
-        const parsedNodes = d3.csvParse(networkData, d => ({
-          developer_id: d.developer_id,
-          country: d.country,
-          betweenness: +d.betweenness,
-          in_degree: +d.in_degree,
-          out_degree: +d.out_degree
-        })) as DeveloperNode[];
+        // Load both CSV files
+        const [nodesResponse, linksResponse] = await Promise.all([
+          fetch('/assets/developer_network_countrybetweenness.csv'),
+          fetch('/assets/network_edges.csv')
+        ]);
 
-        const parsedLinks = d3.csvParse(edgesData, d => ({
-          source: d.source,
-          target: d.target,
-          weight: +d.weight
-        })) as DeveloperLink[];
+        const [nodesText, linksText] = await Promise.all([
+          nodesResponse.text(),
+          linksResponse.text()
+        ]);
 
-        setData({
-          nodes: parsedNodes,
-          links: parsedLinks
-        });
+        // Parse CSV data
+        const parseCSV = (csv: string) => {
+          const lines = csv.split('\n');
+          const headers = lines[0].split(',');
+          return lines.slice(1).map(line => {
+            const values = line.split(',');
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            return headers.reduce<Record<string, any>>((obj, header, i) => {
+              obj[header.trim()] = values[i] ? 
+                isNaN(Number(values[i])) ? values[i].trim() : Number(values[i]) 
+                : null;
+              return obj;
+            }, {});
+          }).filter(row => Object.values(row).some(val => val !== null));
+        };
+
+        const nodes = parseCSV(nodesText) as DeveloperNode[];
+        const links = parseCSV(linksText) as DeveloperLink[];
+
+        setData({ nodes, links });
         setLoading(false);
       } catch (error) {
-        console.error('Error processing data:', error);
+        console.error('Error loading data:', error);
       }
     };
 
-    processData();
+    loadData();
   }, []);
 
   useEffect(() => {
@@ -111,7 +123,7 @@ const NetworkVisualization: React.FC = () => {
         .distance(100))
       .force('charge', d3.forceManyBody().strength(-200))
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide<DeveloperNode>().radius(d => betweennessScale(d.betweenness) + 5));
+      .force('collision', d3.forceCollide().radius((node: SimulationNodeDatum) => betweennessScale((node as DeveloperNode).betweenness) + 5));
 
     // Create links
     const links = container.append('g')
@@ -135,7 +147,7 @@ const NetworkVisualization: React.FC = () => {
       .call(d3.drag<SVGGElement, DeveloperNode>()
         .on('start', dragstarted)
         .on('drag', dragged)
-        .on('end', dragended) as unknown as d3.DragBehavior<SVGGElement, DeveloperNode, unknown>);
+        .on('end', dragended));
 
     // Add circular backgrounds
     nodes.append('circle')
@@ -200,7 +212,7 @@ const NetworkVisualization: React.FC = () => {
         container.attr('transform', event.transform.toString());
       });
 
-    svg.call(zoom as unknown as (selection: d3.Selection<SVGSVGElement, unknown, null, undefined>) => void);
+    svg.call(zoom);
 
     // Update positions on simulation tick
     simulation.on('tick', () => {
@@ -228,7 +240,6 @@ const NetworkVisualization: React.FC = () => {
       nodes.attr('transform', d => `translate(${d.x},${d.y})`);
     });
 
-    // Drag functions
     function dragstarted(event: d3.D3DragEvent<SVGGElement, DeveloperNode, unknown>, d: DeveloperNode) {
       if (!event.active) simulation.alphaTarget(0.3).restart();
       d.fx = d.x;
