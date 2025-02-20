@@ -1,39 +1,50 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import Papa from 'papaparse';
+import networkData from '../assets/developer_network_countrybetweenness.csv';
+import edgesData from '../assets/network_edges.csv';
 
-const NetworkVisualization = () => {
-  const svgRef = useRef(null);
-  const [data, setData] = useState(null);
+// Define interfaces for our data structures
+interface DeveloperNode extends d3.SimulationNodeDatum {
+  developer_id: string;
+  country: string;
+  betweenness: number;
+  in_degree: number;
+  out_degree: number;
+  x?: number;
+  y?: number;
+}
+
+interface DeveloperLink extends d3.SimulationLinkDatum<DeveloperNode> {
+  source: string | DeveloperNode;
+  target: string | DeveloperNode;
+  weight: number;
+}
+
+interface NetworkData {
+  nodes: DeveloperNode[];
+  links: DeveloperLink[];
+}
+
+const NetworkVisualization: React.FC = () => {
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [data, setData] = useState<NetworkData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const loadData = async () => {
+    // Process the imported data
+    const processData = () => {
       try {
-        // Load both data files
-        const devResponse = await window.fs.readFile('developer_network_countrybetweenness.csv', { encoding: 'utf8' });
-        const edgeResponse = await window.fs.readFile('network_edges.csv', { encoding: 'utf8' });
-
-        const devData = Papa.parse(devResponse, {
-          header: true,
-          dynamicTyping: true,
-          skipEmptyLines: true
-        }).data;
-
-        const edgeData = Papa.parse(edgeResponse, {
-          header: true,
-          dynamicTyping: true,
-          skipEmptyLines: true
-        }).data;
-
-        setData({ nodes: devData, links: edgeData });
+        setData({
+          nodes: networkData as DeveloperNode[],
+          links: edgesData as DeveloperLink[]
+        });
         setLoading(false);
       } catch (error) {
-        console.error('Error loading data:', error);
+        console.error('Error processing data:', error);
       }
     };
 
-    loadData();
+    processData();
   }, []);
 
   useEffect(() => {
@@ -71,17 +82,17 @@ const NetworkVisualization = () => {
     });
 
     // Create scales
-    const betweennessScale = d3.scaleLinear()
-      .domain([0, d3.max(data.nodes, d => d.betweenness)])
+    const betweennessScale = d3.scaleLinear<number>()
+      .domain([0, d3.max(data.nodes, d => d.betweenness) || 0])
       .range([8, 25]);
 
-    const edgeWeightScale = d3.scaleLinear()
-      .domain([1, d3.max(data.links, d => d.weight)])
+    const edgeWeightScale = d3.scaleLinear<number>()
+      .domain([1, d3.max(data.links, d => d.weight) || 1])
       .range([1, 4]);
 
     // Create force simulation
-    const simulation = d3.forceSimulation(data.nodes)
-      .force('link', d3.forceLink(data.links)
+    const simulation = d3.forceSimulation<DeveloperNode>(data.nodes)
+      .force('link', d3.forceLink<DeveloperNode, DeveloperLink>(data.links)
         .id(d => d.developer_id)
         .distance(100))
       .force('charge', d3.forceManyBody().strength(-200))
@@ -90,7 +101,7 @@ const NetworkVisualization = () => {
 
     // Create links
     const links = container.append('g')
-      .selectAll('path')
+      .selectAll<SVGPathElement, DeveloperLink>('path')
       .data(data.links)
       .join('path')
       .attr('class', 'link')
@@ -103,14 +114,14 @@ const NetworkVisualization = () => {
 
     // Create nodes
     const nodes = container.append('g')
-      .selectAll('.node')
+      .selectAll<SVGGElement, DeveloperNode>('.node')
       .data(data.nodes)
       .join('g')
       .attr('class', 'node')
-      .call(d3.drag()
+      .call(d3.drag<SVGGElement, DeveloperNode>()
         .on('start', dragstarted)
         .on('drag', dragged)
-        .on('end', dragended));
+        .on('end', dragended) as any);
 
     // Add circular backgrounds
     nodes.append('circle')
@@ -130,10 +141,10 @@ const NetworkVisualization = () => {
       .attr('width', d => betweennessScale(d.betweenness) * 2)
       .attr('height', d => betweennessScale(d.betweenness) * 2)
       .attr('clip-path', 'circle(50%)')
-      .on('error', function() {
-        const parent = d3.select(this.parentNode);
+      .on('error', function(this: SVGImageElement) {
+        const parent = d3.select(this.parentNode as SVGGElement);
         parent.select('circle').attr('fill', '#ccc');
-        this.remove();
+        d3.select(this).remove();
       });
 
     // Add tooltips
@@ -148,7 +159,7 @@ const NetworkVisualization = () => {
       .style('pointer-events', 'none')
       .style('opacity', 0);
 
-    nodes.on('mouseover', (event, d) => {
+    nodes.on('mouseover', (event: MouseEvent, d: DeveloperNode) => {
         tooltip.transition()
           .duration(200)
           .style('opacity', .9);
@@ -169,32 +180,34 @@ const NetworkVisualization = () => {
       });
 
     // Add zoom behavior
-    const zoom = d3.zoom()
+    const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 4])
-      .on('zoom', (event) => {
-        container.attr('transform', event.transform);
+      .on('zoom', (event: d3.D3ZoomEvent<SVGSVGElement, unknown>) => {
+        container.attr('transform', event.transform.toString());
       });
 
-    svg.call(zoom);
+    svg.call(zoom as any);
 
     // Update positions on simulation tick
     simulation.on('tick', () => {
       links.attr('d', d => {
-        const dx = d.target.x - d.source.x;
-        const dy = d.target.y - d.source.y;
+        const source = d.source as DeveloperNode;
+        const target = d.target as DeveloperNode;
+        const dx = target.x! - source.x!;
+        const dy = target.y! - source.y!;
         const dr = Math.sqrt(dx * dx + dy * dy) * 2;
         
-        if (d.source.developer_id === d.target.developer_id) {
+        if (source.developer_id === target.developer_id) {
           // Self-loop
-          const x = d.source.x;
-          const y = d.source.y;
-          const r = betweennessScale(d.source.betweenness);
+          const x = source.x!;
+          const y = source.y!;
+          const r = betweennessScale(source.betweenness);
           return `M ${x-r},${y} 
                   a ${r},${r} 0 1,1 ${r*2},0 
                   a ${r},${r} 0 1,1 ${-r*2},0`;
         } else {
           // Regular link with curve
-          return `M${d.source.x},${d.source.y}A${dr},${dr} 0 0,1 ${d.target.x},${d.target.y}`;
+          return `M${source.x},${source.y}A${dr},${dr} 0 0,1 ${target.x},${target.y}`;
         }
       });
 
@@ -202,18 +215,18 @@ const NetworkVisualization = () => {
     });
 
     // Drag functions
-    function dragstarted(event, d) {
+    function dragstarted(event: d3.D3DragEvent<SVGGElement, DeveloperNode, unknown>, d: DeveloperNode) {
       if (!event.active) simulation.alphaTarget(0.3).restart();
       d.fx = d.x;
       d.fy = d.y;
     }
 
-    function dragged(event, d) {
+    function dragged(event: d3.D3DragEvent<SVGGElement, DeveloperNode, unknown>, d: DeveloperNode) {
       d.fx = event.x;
       d.fy = event.y;
     }
 
-    function dragended(event, d) {
+    function dragended(event: d3.D3DragEvent<SVGGElement, DeveloperNode, unknown>, d: DeveloperNode) {
       if (!event.active) simulation.alphaTarget(0);
       d.fx = null;
       d.fy = null;
@@ -222,8 +235,8 @@ const NetworkVisualization = () => {
   }, [data]);
 
   // Helper function to get country codes
-  function getCountryCode(country) {
-    const countryMap = {
+  function getCountryCode(country: string): string {
+    const countryMap: Record<string, string> = {
       'USA': 'US',
       'United States': 'US',
       'United Kingdom': 'GB',
@@ -239,7 +252,6 @@ const NetworkVisualization = () => {
       'Australia': 'AU',
       'India': 'IN',
       'Unknown': 'UN'
-      // Add more mappings as needed
     };
     return countryMap[country] || 'UN';
   }
