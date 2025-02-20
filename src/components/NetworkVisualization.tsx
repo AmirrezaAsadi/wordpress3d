@@ -34,9 +34,23 @@ const NetworkVisualization: React.FC = () => {
     // Process the imported data
     const processData = () => {
       try {
+        const parsedNodes = d3.csvParse(networkData, d => ({
+          developer_id: d.developer_id,
+          country: d.country,
+          betweenness: +d.betweenness,
+          in_degree: +d.in_degree,
+          out_degree: +d.out_degree
+        })) as DeveloperNode[];
+
+        const parsedLinks = d3.csvParse(edgesData, d => ({
+          source: d.source,
+          target: d.target,
+          weight: +d.weight
+        })) as DeveloperLink[];
+
         setData({
-          nodes: networkData as DeveloperNode[],
-          links: edgesData as DeveloperLink[]
+          nodes: parsedNodes,
+          links: parsedLinks
         });
         setLoading(false);
       } catch (error) {
@@ -97,7 +111,7 @@ const NetworkVisualization: React.FC = () => {
         .distance(100))
       .force('charge', d3.forceManyBody().strength(-200))
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(d => betweennessScale(d.betweenness) + 5));
+      .force('collision', d3.forceCollide<DeveloperNode>().radius(d => betweennessScale(d.betweenness) + 5));
 
     // Create links
     const links = container.append('g')
@@ -121,7 +135,7 @@ const NetworkVisualization: React.FC = () => {
       .call(d3.drag<SVGGElement, DeveloperNode>()
         .on('start', dragstarted)
         .on('drag', dragged)
-        .on('end', dragended) as any);
+        .on('end', dragended) as unknown as d3.DragBehavior<SVGGElement, DeveloperNode, unknown>);
 
     // Add circular backgrounds
     nodes.append('circle')
@@ -186,7 +200,7 @@ const NetworkVisualization: React.FC = () => {
         container.attr('transform', event.transform.toString());
       });
 
-    svg.call(zoom as any);
+    svg.call(zoom as unknown as (selection: d3.Selection<SVGSVGElement, unknown, null, undefined>) => void);
 
     // Update positions on simulation tick
     simulation.on('tick', () => {
